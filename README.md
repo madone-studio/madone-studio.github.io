@@ -61,6 +61,35 @@ Our mission? **Build games that inspire, connect, and bring joy to millions of p
 
 ---
 
+## 🚀 Web Homepage & React Migration
+
+The MADONE Studio static homepage is built with React and bundled with Vite.
+
+### Development & Build Commands
+- **Install dependencies:** `pnpm install --frozen-lockfile`
+- **Build production bundle:** `node scripts/build.mjs` (or `pnpm run build`)
+- **Run Playwright UI tests:** `node test-ui.mjs` (or `pnpm test`)
+- **Run origin server verification:** `node test-server.mjs`
+- **Run game demos validation:** `node test-games.mjs`
+- **Smoke all seven Unity builds:** `node scripts/check-games.mjs` (set `MADONE_ORIGIN` to test the public deployment).
+- **Verify Artwork UI and media:** `node --test test-artwork.mjs test-artwork-media.mjs` (uses existing host Playwright, Chromium and ffprobe).
+- **Build a private preview:** `MADONE_BUILD_DIR=/absolute/staging/path node scripts/build.mjs`; never rebuild the live `dist` in place.
+
+### Artwork
+- Open `/#artwork` from the header or footer: 28 looping animations across three characters (10 / 17 / 1).
+- Responsive preview cards, character filters, pause/play, reduced-motion default and native enlarged viewer with Previous/Next.
+- Offline-baked WebM VP9 with H.264 MP4 fallback and JPEG posters; no Spine runtime or source rigs are published. Original files remain outside the repository.
+
+### Production
+- Project: `/data/madone-studio-profile`; static `dist` served at loopback IPv4 and IPv6 port `6789`.
+- Service: `madone-studio-profile.service` (`deploy/madone-studio-profile.service`), enabled at boot and automatically restarted after a crash.
+- Public: https://porfile-madonestudio.hollow-agent.xyz/ through the existing shared connector; no tunnel restart required.
+- Start locally: `node server.mjs`. Only reviewed public artifacts are served, never repository sources.
+- The contact form prepares a mailto draft; it does not send mail or require SMTP credentials. Four home cards had no demo in the original and are labelled unavailable.
+- The original compiled Archero build logs an insecure-connection exception; TileCandy logs animation/advertising errors. Unity initialization is smoke-tested, not a complete gameplay/SDK test. Fixing compiled game internals requires their Unity sources.
+
+---
+
 ## 🤝 Connect With Us
 
 - 🌐 **Website:** [MADONE Studio](https://madone-studio.github.io/)

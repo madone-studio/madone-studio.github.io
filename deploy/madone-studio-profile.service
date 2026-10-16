@@ -1,0 +1,25 @@
+[Unit]
+Description=MADONE Studio React portfolio static origin
+After=network.target
+RequiresMountsFor=/data/madone-studio-profile /data/hermes/node
+
+[Service]
+Type=simple
+User=opc
+Group=opc
+WorkingDirectory=/data/madone-studio-profile
+Environment=NODE_ENV=production
+Environment=PORT=6789
+ExecStart=/data/hermes/node/bin/node /data/madone-studio-profile/server.mjs
+Restart=always
+RestartSec=3
+KillSignal=SIGTERM
+TimeoutStopSec=15
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+UMask=0027
+
+[Install]
+WantedBy=multi-user.target

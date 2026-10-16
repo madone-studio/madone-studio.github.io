@@ -1,9 +1,4 @@
 // Unity script setup
-window.addEventListener("load", function () {
-    if ("serviceWorker" in navigator) {
-        navigator.serviceWorker.register("ServiceWorker.js");
-    }
-});
 var unityInstanceRef;
 var unsubscribe;
 var container = document.querySelector("#unity-container");
@@ -22,7 +17,7 @@ function unityShowBanner(msg, type) {
         warningBanner.style.display = warningBanner.children.length ? 'block' : 'none';
     }
     var div = document.createElement('div');
-    div.innerHTML = msg;
+    div.textContent = msg;
     warningBanner.appendChild(div);
     if (type == 'error') div.style = 'background: red; padding: 10px;';
     else {

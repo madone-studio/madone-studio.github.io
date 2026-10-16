@@ -1,0 +1,19 @@
+{
+  "name": "madone-studio-profile",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@12.5.1",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "test": "node test-ui.mjs"
+  },
+  "dependencies": {
+    "react": "19.2.7",
+    "react-dom": "19.2.7"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "6.0.3",
+    "vite": "8.2.0"
+  }
+}

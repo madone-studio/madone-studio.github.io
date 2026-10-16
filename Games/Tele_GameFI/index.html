@@ -9,16 +9,10 @@
     <link rel="manifest" href="manifest.webmanifest">
 
     <link rel="manifest" href="manifest.json" />
-    <script>
-      if ('serviceWorker' in navigator) {
-        window.addEventListener('load', function () {
-          navigator.serviceWorker.register('ServiceWorker.js');
-        });
-      }
-    </script>
     
 </head>
 <body>
+    <a href="/#games" class="back-button">← Back to Home</a>
     <div id="unity-container">
         <canvas id="unity-canvas" width=960 height=600 tabindex="-1"></canvas>
         <div id="unity-loading-bar">
@@ -35,7 +29,6 @@
         </div>
         <div id="unity-warning"> </div>
     </div>
-    <script src="https://telegram.org/js/telegram-web-app.js"></script>
     <script src="index.js"></script>
 </body>
 </html>

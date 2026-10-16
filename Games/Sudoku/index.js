@@ -1,9 +1,4 @@
 // Unity script setup
-window.addEventListener("load", function () {
-    if ("serviceWorker" in navigator) {
-        navigator.serviceWorker.register("ServiceWorker.js");
-    }
-});
 var unityInstanceRef;
 var unsubscribe;
 var container = document.querySelector("#unity-container");
@@ -22,7 +17,7 @@ function unityShowBanner(msg, type) {
         warningBanner.style.display = warningBanner.children.length ? 'block' : 'none';
     }
     var div = document.createElement('div');
-    div.innerHTML = msg;
+    div.textContent = msg;
     warningBanner.appendChild(div);
     if (type == 'error') div.style = 'background: red; padding: 10px;';
     else {
@@ -74,29 +69,6 @@ script.onload = () => {
     }).then((unityInstance) => {
         window.unityInstance = unityInstance;
 
-        try {
-            if(!window.Telegram || !window.Telegram.WebApp){
-                alert("Cannot get Telegram Data, please reload Bot");
-            }
-            if (window.Telegram && window.Telegram.WebApp) {
-                window.Telegram.WebApp.ready();
-                window.Telegram.WebApp.expand();
-                window.Telegram.WebApp.enableClosingConfirmation();
-                window.Telegram.WebApp.disableVerticalSwipes();
-                if (typeof window.Telegram.WebApp.requestFullscreen === 'function') {
-                    if (/iPhone|iPad|iPod|Android/i.test(navigator.userAgent)) {
-                        window.Telegram.WebApp.requestFullscreen();
-                    } else {
-                        console.log("Not opening fullscreen due to desktop playback.");
-                    }
-                } else {
-                    console.log("requestFullscreen is not supported.");
-                }
-            }
-        } catch (error) {
-            alert("Cannot get Telegram Data, please reload Bot");
-        }
-        
         unityInstanceRef = unityInstance;
         loadingBar.style.display = "none";
     }).catch((message) => {
