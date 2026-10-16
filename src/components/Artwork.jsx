@@ -495,25 +495,27 @@ export default function Artwork() {
         {activeGroup && currentDialogAnim && (
           <div className="artwork-dialog-content">
             <div className="artwork-dialog-header">
-              <div className="artwork-dialog-select-group">
-                <label htmlFor="artwork-animation" className="artwork-dialog-label">
-                  Animation
-                </label>
-                <select
-                  id="artwork-animation"
-                  className="artwork-dialog-select"
-                  value={selectedAnimId}
-                  onChange={handleSelectAnimation}
-                  aria-label="Select animation"
-                >
-                  <option value="auto">Auto — all animations</option>
-                  {activeGroup.items.map((item) => (
-                    <option key={item.id} value={item.id}>
-                      {item.title}
-                    </option>
-                  ))}
-                </select>
-              </div>
+              {activeGroup.items.length > 1 && (
+                <div className="artwork-dialog-select-group">
+                  <label htmlFor="artwork-animation" className="artwork-dialog-label">
+                    Animation
+                  </label>
+                  <select
+                    id="artwork-animation"
+                    className="artwork-dialog-select"
+                    value={selectedAnimId}
+                    onChange={handleSelectAnimation}
+                    aria-label="Select animation"
+                  >
+                    <option value="auto">Auto — all animations</option>
+                    {activeGroup.items.map((item) => (
+                      <option key={item.id} value={item.id}>
+                        {item.title}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
 
               <button
                 type="button"

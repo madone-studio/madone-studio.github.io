@@ -251,13 +251,13 @@ test('Artwork tab: one prioritized looping preview per card, full expanded viewe
       const char3EnlargeBtn = await page.$('.artwork-card[data-character="char3"] .artwork-open-btn');
       await char3EnlargeBtn.click();
       await page.waitForFunction(() => document.querySelector('dialog.artwork-dialog')?.open);
-      const char3Options = await page.$$eval('#artwork-animation option', (opts) => opts.map((o) => o.value));
-      assert.equal(char3Options.length, 2, 'char3 must have 1 auto + 1 animation option (total 2)');
+      assert.equal(await page.locator('#artwork-animation').count(), 0, 'char3 has one animation: no selector');
+      assert.equal(await page.locator('dialog.artwork-dialog video[data-active="true"]').count(), 1, 'char3 still plays its single clip');
       await page.click('dialog.artwork-dialog', { position: { x: 5, y: 5 } });
       await page.waitForFunction(() => !document.querySelector('dialog.artwork-dialog')?.open);
 
-      // Total animations count = (11-1) + (18-1) + (2-1) = 10 + 17 + 1 = 28
-      assert.equal((char1Options.length - 1) + (char2Options.length - 1) + (char3Options.length - 1), 28, 'All 28 animations available across modals');
+      // Total animations = 10 (char1) + 17 (char2) + 1 (char3, no selector) = 28
+      assert.equal((char1Options.length - 1) + (char2Options.length - 1) + 1, 28, 'All 28 animations available across modals');
 
       // 14. Error state & Retry on card without resetting other cards
       await page.waitForSelector('.artwork-card[data-character="char1"] video[data-active="true"]');

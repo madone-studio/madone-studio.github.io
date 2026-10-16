@@ -239,6 +239,10 @@ dialog.artwork-dialog:not([open]) {
   flex: 1;
 }
 
+.artwork-dialog-close {
+  margin-left: auto;
+}
+
 .artwork-dialog-label {
   font-size: 0.9rem;
   font-weight: 600;
