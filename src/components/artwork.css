@@ -1,48 +1,34 @@
 /* ponytail: Behance-style responsive character artwork gallery; pure CSS over JS layout. */
+:root {
+  --artwork-fade-duration: 220ms;
+}
+
 .artwork-section {
+  --artwork-fade-duration: 220ms;
   padding: 120px 0 80px;
   min-height: 80vh;
   background-color: #000000;
   color: #ffffff;
 }
 
+@media (prefers-reduced-motion: reduce) {
+  :root,
+  .artwork-section {
+    --artwork-fade-duration: 0ms;
+  }
+  .artwork-card,
+  .artwork-card:hover,
+  .artwork-open-btn,
+  .artwork-open-btn:hover {
+    transform: none !important;
+    transition: none !important;
+  }
+}
+
 .artwork-header {
   text-align: center;
   max-width: 800px;
-  margin: 0 auto 2rem;
-}
-
-.artwork-toolbar {
-  display: flex;
-  justify-content: flex-end;
-  align-items: center;
-  margin-bottom: 2rem;
-  padding: 0.75rem 1rem;
-  background: #0f131f;
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 12px;
-}
-
-.artwork-motion-toggle {
-  background: #181d2c;
-  color: #e2e8f0;
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  border-radius: 8px;
-  padding: 0.5rem 1rem;
-  font-size: 0.85rem;
-  font-weight: 500;
-  cursor: pointer;
-  display: inline-flex;
-  align-items: center;
-  gap: 0.5rem;
-  min-height: 44px;
-  min-width: 44px;
-  transition: all 0.2s ease;
-}
-
-.artwork-motion-toggle:hover {
-  border-color: #ef4444;
-  color: #ffffff;
+  margin: 0 auto 2.5rem;
 }
 
 /* 3-card Character Grid */
@@ -81,33 +67,67 @@
   cursor: pointer;
 }
 
-.artwork-video {
+/* Two-layer crossfade video elements */
+.artwork-video,
+.artwork-dialog-video {
+  position: absolute;
+  inset: 0;
   width: 100%;
   height: 100%;
   object-fit: contain;
-  display: block;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--artwork-fade-duration, 220ms) ease;
 }
 
-.artwork-thumbnail-box:hover .artwork-card-overlay,
-.artwork-thumbnail-box:focus-within .artwork-card-overlay {
+.artwork-video[data-active="true"],
+.artwork-dialog-video[data-active="true"] {
   opacity: 1;
+  pointer-events: auto;
+  z-index: 1;
 }
 
+.artwork-video[data-incoming="true"],
+.artwork-dialog-video[data-incoming="true"] {
+  opacity: 1;
+  pointer-events: auto;
+  z-index: 2;
+}
+
+.artwork-video[data-outgoing="true"],
+.artwork-dialog-video[data-outgoing="true"] {
+  opacity: 1;
+  pointer-events: none;
+  z-index: 1;
+}
+
+.artwork-video[data-idle="true"],
+.artwork-dialog-video[data-idle="true"] {
+  transition: none;
+  opacity: 0;
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* Card Persistent "Click to see more" Overlay */
 .artwork-card-overlay {
   position: absolute;
   inset: 0;
-  background: rgba(0, 0, 0, 0.55);
   display: flex;
-  align-items: center;
+  align-items: flex-end;
   justify-content: center;
-  opacity: 0;
-  transition: opacity 0.2s ease;
+  padding: 1.25rem;
+  background: linear-gradient(to top, rgba(0, 0, 0, 0.75) 0%, rgba(0, 0, 0, 0.15) 45%, transparent 100%);
+  opacity: 1;
+  pointer-events: none;
+  z-index: 10;
 }
 
 .artwork-open-btn {
+  pointer-events: auto;
   background: #ef4444;
   color: #ffffff;
-  border: none;
+  border: 1px solid rgba(255, 255, 255, 0.2);
   padding: 0.65rem 1.25rem;
   border-radius: 8px;
   font-size: 0.85rem;
@@ -115,8 +135,9 @@
   cursor: pointer;
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 0.5rem;
-  box-shadow: 0 4px 14px rgba(239, 68, 68, 0.4);
+  box-shadow: 0 4px 14px rgba(239, 68, 68, 0.45);
   min-height: 44px;
   min-width: 44px;
   transition: transform 0.15s ease, background 0.15s ease;
@@ -125,6 +146,11 @@
 .artwork-open-btn:hover {
   background: #dc2626;
   transform: scale(1.04);
+}
+
+.artwork-open-btn:focus-visible {
+  outline: 2px solid #ffffff;
+  outline-offset: 2px;
 }
 
 /* Video Error State */
@@ -141,6 +167,7 @@
   gap: 0.75rem;
   color: #f87171;
   font-size: 0.85rem;
+  z-index: 20;
 }
 
 .artwork-btn-retry {
@@ -172,6 +199,11 @@ dialog.artwork-dialog {
   align-items: center;
   justify-content: center;
   z-index: 2000;
+  width: 100vw;
+  height: 100vh;
+  max-width: 100vw;
+  max-height: 100vh;
+  box-sizing: border-box;
 }
 
 dialog.artwork-dialog:not([open]) {
@@ -254,6 +286,10 @@ dialog.artwork-dialog:not([open]) {
   color: #ef4444;
 }
 
+.artwork-dialog-close:focus-visible {
+  outline: 2px solid #ef4444;
+}
+
 .artwork-dialog-body {
   padding: 1.25rem 1.5rem;
   display: flex;
@@ -264,6 +300,7 @@ dialog.artwork-dialog:not([open]) {
 }
 
 .artwork-dialog-video-box {
+  position: relative;
   width: 100%;
   aspect-ratio: 1 / 1;
   max-width: 500px;
@@ -274,13 +311,6 @@ dialog.artwork-dialog:not([open]) {
   align-items: center;
   justify-content: center;
   border: 1px solid rgba(255, 255, 255, 0.05);
-}
-
-.artwork-dialog-video {
-  width: 100%;
-  height: 100%;
-  object-fit: contain;
-  display: block;
 }
 
 .artwork-dialog-footer {
@@ -313,13 +343,8 @@ dialog.artwork-dialog:not([open]) {
   color: #ffffff;
 }
 
-@media (hover: none) {
-  .artwork-card-overlay {
-    opacity: 1;
-    background: transparent;
-    align-items: flex-end;
-    padding: 0.75rem;
-  }
+.artwork-btn-outline:focus-visible {
+  outline: 2px solid #ef4444;
 }
 
 @media (max-width: 900px) {
@@ -337,9 +362,6 @@ dialog.artwork-dialog:not([open]) {
     grid-template-columns: 1fr;
     gap: 1.25rem;
   }
-  .artwork-toolbar {
-    justify-content: center;
-  }
   dialog.artwork-dialog {
     padding: 0.5rem;
   }
@@ -352,9 +374,34 @@ dialog.artwork-dialog:not([open]) {
     flex-direction: column;
     align-items: flex-start;
     gap: 0.25rem;
+    width: calc(100% - 50px);
   }
   .artwork-dialog-select {
     max-width: 100%;
     width: 100%;
+  }
+}
+
+@media (max-height: 500px) and (orientation: landscape) {
+  dialog.artwork-dialog {
+    padding: 0.25rem;
+  }
+  .artwork-dialog-content {
+    max-height: 96vh;
+  }
+  .artwork-dialog-header {
+    padding: 0.4rem 0.75rem;
+  }
+  .artwork-dialog-body {
+    padding: 0.4rem 0.75rem;
+    max-height: 60vh;
+  }
+  .artwork-dialog-video-box {
+    max-height: 58vh;
+    width: auto;
+    aspect-ratio: 1 / 1;
+  }
+  .artwork-dialog-footer {
+    padding: 0.4rem 0.75rem;
   }
 }

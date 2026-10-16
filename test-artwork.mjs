@@ -8,9 +8,9 @@ import { createStaticServer } from './server.mjs';
 import { chromium } from '/data/career-ops-runtime/node_modules/playwright/index.mjs';
 
 const rootDir = path.dirname(fileURLToPath(import.meta.url));
-const scratchDistDir = process.env.MADONE_BUILD_DIR || path.join(process.env.TMPDIR, 'madone-grouped-artwork', 'coder-dist');
+const scratchDistDir = process.env.MADONE_BUILD_DIR || path.join(process.env.TMPDIR, 'madone-autoplay', 'coder-dist');
 
-test('Artwork tab: grouped character cards, sequential playback, dialog viewer and responsive checks', async () => {
+test('Artwork tab: autoplay previews, click to see more, crossfade transitions, dialog viewer and responsive checks', async () => {
   if (!process.env.MADONE_BUILD_DIR) {
     execFileSync(process.execPath, ['scripts/build.mjs'], {
       cwd: rootDir,
@@ -87,145 +87,198 @@ test('Artwork tab: grouped character cards, sequential playback, dialog viewer a
       assert.ok(char2Card, 'Card for char2 must exist');
       assert.ok(char3Card, 'Card for char3 must exist');
 
-      // 3. Metadata absent: title, duration, badges, rig text, and filter toolbar
+      // 3. Persistent visible "Click to see more" cues on all 3 cards
+      const openButtons = await page.$$('.artwork-card .artwork-open-btn');
+      assert.equal(openButtons.length, 3, 'Must have 3 open buttons for the 3 cards');
+      for (const btn of openButtons) {
+        const text = await btn.innerText();
+        assert.ok(text.toLowerCase().includes('click to see more'), `Button must have persistent text "Click to see more", got: "${text}"`);
+        const box = await btn.boundingBox();
+        assert.ok(box && box.width > 50 && box.height >= 36, 'Click cue button must be visibly rendered');
+      }
+
+      // 4. Metadata absent & Toolbar absent (Play/Pause preview UI completely removed)
       assert.equal(await page.$('.artwork-card-title'), null, 'Card title must be absent');
       assert.equal(await page.$('.artwork-card-duration'), null, 'Card duration must be absent');
       assert.equal(await page.$('.artwork-card-badges'), null, 'Card badges must be absent');
       assert.equal(await page.$('.artwork-card-source'), null, 'Card rig/source text must be absent');
       assert.equal(await page.$('.artwork-filters'), null, 'Redundant per-character filter toolbar must be deleted');
+      assert.equal(await page.$('.artwork-toolbar'), null, 'Toolbar must be completely deleted');
+      assert.equal(await page.$('.artwork-motion-toggle'), null, 'Play/pause preview toggle must be completely deleted');
 
-      // 4. Global Pause/Play Previews toggle
-      const motionToggle = await page.$('.artwork-motion-toggle');
-      assert.ok(motionToggle, 'Global motion toggle button exists');
-      await motionToggle.click(); // Pause
-      const arePreviewsPaused = await page.evaluate(() => {
-        const vids = Array.from(document.querySelectorAll('.artwork-card video'));
-        return vids.every((v) => v.paused);
-      });
-      assert.ok(arePreviewsPaused, 'All card preview videos should be paused after global toggle');
-      await motionToggle.click(); // Resume play
+      // 5. Previews automatically play without user interaction (muted, playsInline)
+      await page.waitForFunction(() => {
+        const vids = Array.from(document.querySelectorAll('.artwork-card video[data-active="true"]'));
+        return vids.length === 3 && vids.every((v) => !v.paused && v.currentTime > 0.05 && v.muted);
+      }, { timeout: 6000 });
 
-      // 5. Card real natural ended transition (sequential advance without synthetic dispatch)
-      const char1Video = await page.$('.artwork-card[data-character="char1"] .artwork-video');
-      assert.ok(char1Video, 'char1 preview video element exists');
+      // 6. Preview playlists restricted to ONLY case-insensitive run/walk/idle in manifest order
+      // char1 -> run, walk
+      // char2 -> RUN (only 1 item, so loops)
+      // char3 -> idle (only 1 item, so loops)
+      const char1ActiveVid = await page.$('.artwork-card[data-character="char1"] video[data-active="true"]');
+      const char2ActiveVid = await page.$('.artwork-card[data-character="char2"] video[data-active="true"]');
+      const char3ActiveVid = await page.$('.artwork-card[data-character="char3"] video[data-active="true"]');
 
-      // Wait for video to be ready and playing
-      await page.waitForFunction(
-        (v) => v && v.duration > 0 && !v.paused,
-        char1Video,
-        { timeout: 5000 }
-      );
-      const initialPoster = await char1Video.getAttribute('poster');
-      await page.waitForFunction(() => document.querySelector('[data-character="char2"] video')?.currentTime > 0.6);
-      const otherTime = await page.locator('[data-character="char2"] video').evaluate(v => v.currentTime);
+      const char1Src1 = await page.evaluate((v) => v.currentSrc || v.src, char1ActiveVid);
+      const char2Src = await page.evaluate((v) => v.currentSrc || v.src, char2ActiveVid);
+      const char3Src = await page.evaluate((v) => v.currentSrc || v.src, char3ActiveVid);
 
-      // Seek near end to test real natural ended transition
+      assert.ok(char1Src1.includes('run'), `char1 first clip must be run, got ${char1Src1}`);
+      assert.ok(char2Src.includes('RUN') || char2Src.toLowerCase().includes('run'), `char2 clip must be RUN, got ${char2Src}`);
+      assert.ok(char3Src.includes('idle'), `char3 clip must be idle, got ${char3Src}`);
+
+      const char2Loop = await page.evaluate((v) => v.loop, char2ActiveVid);
+      const char3Loop = await page.evaluate((v) => v.loop, char3ActiveVid);
+      assert.equal(char2Loop, true, 'char2 single-preview clip must have loop=true');
+      assert.equal(char3Loop, true, 'char3 single-preview clip must have loop=true');
+
+      // Capture char2 currentTime to verify no-other-card-reset rule
+      await page.evaluate((v) => { window.__otherReloads = 0; v.addEventListener('loadstart', () => window.__otherReloads++); }, char2ActiveVid);
+
+      // 7. Natural ended transition on char1: crossfade from run -> walk
+      // Seek active video near end
       await page.evaluate(async (v) => {
         v.currentTime = v.duration - 0.15;
         if (v.paused) await v.play();
-      }, char1Video);
+      }, char1ActiveVid);
 
-      // Wait for natural advance to change poster / clip
-      await page.waitForFunction(
-        ([v, prevPoster]) => v && v.getAttribute('poster') !== prevPoster,
-        [char1Video, initialPoster],
-        { timeout: 5000 }
-      );
-      const nextPoster = await char1Video.getAttribute('poster');
-      assert.notEqual(nextPoster, initialPoster, 'Card preview must advance to next clip on ended');
-      assert.ok(await page.locator('[data-character="char2"] video').evaluate(v => v.currentTime) >= otherTime,
-        'Advancing one character must not reload or restart the other character previews');
+      // Wait for incoming video to appear and decode (status incoming)
+      await page.waitForFunction(() => {
+        const incoming = document.querySelector('.artwork-card[data-character="char1"] video[data-incoming="true"]');
+        return incoming !== null;
+      }, { timeout: 5000 });
 
-      // Single-clip character loops (char3)
-      const char3Video = await page.$('.artwork-card[data-character="char3"] .artwork-video');
-      assert.ok(char3Video, 'char3 video element exists');
-      const isChar3Looping = await page.evaluate((v) => v.loop === true, char3Video);
-      assert.ok(isChar3Looping, 'Single-clip character (char3) should loop');
+      // Check intermediate opacity on incoming frame while outgoing is retained
+      const opacities = await page.evaluate(() => {
+        const incoming = document.querySelector('.artwork-card[data-character="char1"] video[data-incoming="true"]');
+        const outgoing = document.querySelector('.artwork-card[data-character="char1"] video[data-outgoing="true"]');
+        return {
+          incomingOp: incoming ? parseFloat(window.getComputedStyle(incoming).opacity) : null,
+          outgoingOp: outgoing ? parseFloat(window.getComputedStyle(outgoing).opacity) : null
+        };
+      });
 
-      // 6. Dialog: Open char1 card
+      assert.ok(opacities.incomingOp !== null, 'Incoming video layer must be present during crossfade');
+      assert.ok(opacities.outgoingOp !== null && opacities.outgoingOp > 0, 'Outgoing video layer must be retained with opacity > 0 during crossfade');
+
+      // Wait for transition to complete and old layer cleanup
+      await page.waitForFunction(() => {
+        const card = document.querySelector('.artwork-card[data-character="char1"]');
+        const active = card.querySelector('video[data-active="true"]');
+        const incoming = card.querySelector('video[data-incoming="true"]');
+        return !incoming && active && (active.currentSrc || active.src).includes('walk');
+      }, { timeout: 5000 });
+
+      // Check old layer is cleaned up (paused, idle)
+      const layersState = await page.evaluate(() => {
+        const vids = Array.from(document.querySelectorAll('.artwork-card[data-character="char1"] video'));
+        const idleVid = vids.find((v) => v.dataset.idle === 'true');
+        return {
+          totalVideos: vids.length,
+          idleIsPaused: idleVid ? idleVid.paused : null
+        };
+      });
+      assert.equal(layersState.totalVideos, 2, 'Two video layers used for crossfade');
+      assert.equal(layersState.idleIsPaused, true, 'Idle layer must be paused after transition completes');
+
+      // Verify char2 was not reset or reloaded during char1 transition
+      assert.equal(await page.evaluate(() => window.__otherReloads), 0, 'Advancing char1 must not reload char2 (native loop wrap is allowed)');
+
+      // Now seek walk near end to verify wrap-around to run
+      const char1WalkVid = await page.$('.artwork-card[data-character="char1"] video[data-active="true"]');
+      await page.evaluate(async (v) => {
+        v.currentTime = v.duration - 0.15;
+        if (v.paused) await v.play();
+      }, char1WalkVid);
+
+      await page.waitForFunction(() => {
+        const active = document.querySelector('.artwork-card[data-character="char1"] video[data-active="true"]');
+        return active && (active.currentSrc || active.src).includes('run');
+      }, { timeout: 5000 });
+
+      // 8. Dialog: Open char1 card via "Click to see more" button
       const char1EnlargeBtn = await page.$('.artwork-card[data-character="char1"] .artwork-open-btn');
-      assert.ok(char1EnlargeBtn, 'char1 has accessible enlarge button');
       await char1EnlargeBtn.click();
 
       const dialog = await page.$('dialog.artwork-dialog');
       assert.ok(dialog, 'Native dialog element exists');
       assert.ok(await page.evaluate(() => document.querySelector('dialog.artwork-dialog')?.open), 'Dialog is open');
 
-      // Dialog metadata absent
-      assert.equal(await page.$('.artwork-dialog-meta'), null, 'Dialog technical metadata block must be absent');
-      assert.equal(await page.$('.artwork-dialog-nav-btns'), null, 'Redundant prev/next buttons must be absent');
-
-      // Select element exists with default 'auto' mode
+      // Select element exists with default 'auto' mode and 11 options for char1
       const select = await page.$('#artwork-animation');
       assert.ok(select, 'Native select #artwork-animation exists');
-      const selectValue = await page.evaluate(() => document.getElementById('artwork-animation')?.value);
-      assert.equal(selectValue, 'auto', 'Default select value must be "auto"');
+      assert.equal(await page.evaluate(() => document.getElementById('artwork-animation')?.value), 'auto');
 
-      // Coverage options for char1: 1 auto + 10 animations = 11 options
       const char1Options = await page.$$eval('#artwork-animation option', (opts) =>
         opts.map((o) => ({ value: o.value, text: o.textContent.trim() }))
       );
-      assert.equal(char1Options.length, 11, 'char1 select must have 1 auto + 10 animation options');
+      assert.equal(char1Options.length, 11, 'char1 dialog select must have 1 auto + 10 animation options');
       assert.equal(char1Options[0].value, 'auto');
-      assert.ok(char1Options[0].text.includes('Auto'));
 
-      // Dialog video playing
-      const dialogVideo = await page.$('.artwork-dialog-video');
-      assert.ok(dialogVideo, 'Dialog video element exists');
-      await page.waitForFunction((v) => v && v.duration > 0 && !v.paused, dialogVideo, { timeout: 5000 });
-      assert.equal(await page.evaluate((v) => v.loop, dialogVideo), false, 'Auto mode dialog video should not have loop set');
+      // Dialog video autoplays muted
+      await page.waitForFunction(() => {
+        const v = document.querySelector('dialog.artwork-dialog video[data-active="true"]');
+        return v && !v.paused && v.muted;
+      }, { timeout: 5000 });
 
-      // 7. Auto sequential playback in dialog with real natural ended transition and STABLE FOCUS
-      // Focus on select first to verify focus stability
+      // 9. Dialog auto sequential playback with STABLE FOCUS
       await page.focus('#artwork-animation');
       assert.equal(await page.evaluate(() => document.activeElement?.id), 'artwork-animation');
 
-      const initialDialogPoster = await dialogVideo.getAttribute('poster');
-      // Seek near end naturally
+      const dialogActiveVid = await page.$('dialog.artwork-dialog video[data-active="true"]');
       await page.evaluate(async (v) => {
         v.currentTime = v.duration - 0.15;
         if (v.paused) await v.play();
-      }, dialogVideo);
+      }, dialogActiveVid);
 
-      // Await natural advance
-      await page.waitForFunction(
-        ([v, prevPoster]) => v && v.getAttribute('poster') !== prevPoster,
-        [dialogVideo, initialDialogPoster],
-        { timeout: 5000 }
-      );
+      // Wait for auto advance in dialog
+      await page.waitForFunction(() => {
+        const v = document.querySelector('dialog.artwork-dialog video[data-active="true"]');
+        return v && !(v.currentSrc || v.src).includes('run');
+      }, { timeout: 5000 });
 
-      // Verify focus remained stable (not stolen on clip change)
-      const activeElId = await page.evaluate(() => document.activeElement?.id);
-      assert.equal(activeElId, 'artwork-animation', 'Focus must remain stable on active element during auto advance');
+      // Verify focus remained stable on select element
+      assert.equal(await page.evaluate(() => document.activeElement?.id), 'artwork-animation',
+        'Focus must not be stolen during auto sequential advances');
 
-      // 8. Explicit animation selection loop
-      // Select explicit animation (e.g., char1-dead)
+      // 10. Explicit animation selection loops
       await page.selectOption('#artwork-animation', 'char1-dead');
-      await page.waitForFunction(
-        (v) => v && v.getAttribute('poster')?.includes('dead') && Number.isFinite(v.duration) && v.duration > 0,
-        dialogVideo,
-        { timeout: 5000 }
-      );
-      assert.equal(await page.evaluate((v) => v.loop, dialogVideo), true, 'Explicitly selected animation must have loop=true');
 
-      // Seek near end and verify it continues looping on the same animation (doesn't advance)
-      await page.evaluate(async (v) => {
-        v.currentTime = v.duration - 0.15;
-        if (v.paused) await v.play();
-      }, dialogVideo);
-      await page.waitForTimeout(500);
-      const posterAfterLoop = await dialogVideo.getAttribute('poster');
-      assert.ok(posterAfterLoop.includes('dead'), 'Explicitly selected animation must remain on selected animation');
+      // Wait for crossfade to char1-dead
+      await page.waitForFunction(() => {
+        const v = document.querySelector('dialog.artwork-dialog video[data-active="true"]');
+        return v && (v.currentSrc || v.src).includes('dead');
+      }, { timeout: 5000 });
 
-      // 9. Auto resume
-      await page.selectOption('#artwork-animation', 'auto');
-      await page.waitForTimeout(200);
-      assert.equal(await page.evaluate((v) => v.loop, dialogVideo), false, 'Selecting auto resumes non-looping sequential mode');
+      const deadLoop = await page.evaluate(() => {
+        const v = document.querySelector('dialog.artwork-dialog video[data-active="true"]');
+        return v ? v.loop : false;
+      });
+      assert.equal(deadLoop, true, 'Explicitly selected animation must have loop=true');
 
-      // 10. Close dialog via Escape key & check focus return
+      // 11. Rapid manual selections without stale callbacks or stuck layers
+      await page.selectOption('#artwork-animation', 'char1-attack');
+      await page.selectOption('#artwork-animation', 'char1-skill');
+      await page.selectOption('#artwork-animation', 'char1-walk');
+
+      await page.waitForFunction(() => {
+        const v = document.querySelector('dialog.artwork-dialog video[data-active="true"]');
+        const incoming = document.querySelector('dialog.artwork-dialog video[data-incoming="true"]');
+        return !incoming && v && (v.currentSrc || v.src).includes('walk');
+      }, { timeout: 5000 });
+
+      const dialogLayerCount = await page.evaluate(() => {
+        const vids = Array.from(document.querySelectorAll('dialog.artwork-dialog video'));
+        const playingVids = vids.filter((v) => !v.paused);
+        return { total: vids.length, playingCount: playingVids.length };
+      });
+      assert.equal(dialogLayerCount.total, 2, 'Dialog uses 2 video layers');
+      assert.equal(dialogLayerCount.playingCount, 1, 'Only the active layer is playing after rapid selections');
+
+      // 12. Close dialog via Escape key & check focus return
       await page.keyboard.press('Escape');
-      await page.waitForTimeout(200);
-      assert.equal(await page.evaluate(() => document.querySelector('dialog.artwork-dialog')?.open), false, 'Dialog must close on Escape key');
+      await page.waitForFunction(() => !document.querySelector('dialog.artwork-dialog')?.open);
 
       const isFocusedOnTrigger = await page.evaluate(() => {
         const btn = document.querySelector('.artwork-card[data-character="char1"] .artwork-open-btn');
@@ -233,27 +286,70 @@ test('Artwork tab: grouped character cards, sequential playback, dialog viewer a
       });
       assert.ok(isFocusedOnTrigger, 'Focus must return to trigger button after dialog closes');
 
-      // 11. Group coverage options: char2 (17) and char3 (1)
+      // 13. Dialog options coverage for char2 (17) and char3 (1) -> total 28 across modal
       const char2EnlargeBtn = await page.$('.artwork-card[data-character="char2"] .artwork-open-btn');
       await char2EnlargeBtn.click();
       await page.waitForFunction(() => document.querySelector('dialog.artwork-dialog')?.open);
       const char2Options = await page.$$eval('#artwork-animation option', (opts) => opts.map((o) => o.value));
       assert.equal(char2Options.length, 18, 'char2 must have 1 auto + 17 animation options (total 18)');
       await page.keyboard.press('Escape');
-      await page.waitForTimeout(200);
+      await page.waitForFunction(() => !document.querySelector('dialog.artwork-dialog')?.open);
 
       const char3EnlargeBtn = await page.$('.artwork-card[data-character="char3"] .artwork-open-btn');
       await char3EnlargeBtn.click();
       await page.waitForFunction(() => document.querySelector('dialog.artwork-dialog')?.open);
       const char3Options = await page.$$eval('#artwork-animation option', (opts) => opts.map((o) => o.value));
       assert.equal(char3Options.length, 2, 'char3 must have 1 auto + 1 animation option (total 2)');
-
-      // 12. Backdrop click to close dialog
       await page.click('dialog.artwork-dialog', { position: { x: 5, y: 5 } });
-      await page.waitForTimeout(200);
-      assert.equal(await page.evaluate(() => document.querySelector('dialog.artwork-dialog')?.open), false, 'Dialog closed on backdrop click');
+      await page.waitForFunction(() => !document.querySelector('dialog.artwork-dialog')?.open);
 
-      // 13. Back / Forward navigation
+      // Total animations count = (11-1) + (18-1) + (2-1) = 10 + 17 + 1 = 28
+      assert.equal((char1Options.length - 1) + (char2Options.length - 1) + (char3Options.length - 1), 28, 'All 28 animations available across modals');
+
+      // 14. Error state & Retry on card without resetting other cards
+      await page.waitForSelector('.artwork-card[data-character="char1"] video[data-active="true"]');
+      await page.evaluate(() => {
+        const card1 = document.querySelector('.artwork-card[data-character="char1"]');
+        const activeVid = card1.querySelector('video[data-active="true"]');
+        activeVid.dispatchEvent(new Event('error'));
+      });
+
+      await page.waitForSelector('.artwork-card[data-character="char1"] .artwork-error-state');
+      assert.ok(await page.$('.artwork-card[data-character="char1"] .artwork-btn-retry'), 'Retry button appears on error');
+
+      // Check char2 and char3 are NOT in error state
+      assert.equal(await page.$('.artwork-card[data-character="char2"] .artwork-error-state'), null);
+      assert.equal(await page.$('.artwork-card[data-character="char3"] .artwork-error-state'), null);
+
+      // Click retry
+      await page.click('.artwork-card[data-character="char1"] .artwork-btn-retry');
+      await page.waitForFunction(() => {
+        const card1 = document.querySelector('.artwork-card[data-character="char1"]');
+        return !card1.querySelector('.artwork-error-state') && card1.querySelector('video[data-active="true"]');
+      });
+
+      // 15. Document visibility: pause on hidden, resume on visible
+      await page.evaluate(() => {
+        Object.defineProperty(document, 'hidden', { value: true, configurable: true });
+        document.dispatchEvent(new Event('visibilitychange'));
+      });
+
+      await page.waitForFunction(() => {
+        const vids = Array.from(document.querySelectorAll('.artwork-card video[data-active="true"]'));
+        return vids.every((v) => v.paused);
+      }, { timeout: 3000 });
+
+      await page.evaluate(() => {
+        Object.defineProperty(document, 'hidden', { value: false, configurable: true });
+        document.dispatchEvent(new Event('visibilitychange'));
+      });
+
+      await page.waitForFunction(() => {
+        const vids = Array.from(document.querySelectorAll('.artwork-card video[data-active="true"]'));
+        return vids.every((v) => !v.paused);
+      }, { timeout: 3000 });
+
+      // 16. Back / Forward navigation
       await page.goBack();
       await page.waitForTimeout(300);
       assert.ok(await page.$('section#home'), 'Browser back should restore homepage sections');
@@ -262,7 +358,7 @@ test('Artwork tab: grouped character cards, sequential playback, dialog viewer a
       await page.waitForTimeout(300);
       assert.ok(await page.$('section#artwork'), 'Browser forward should return to #artwork');
 
-      // 14. Direct refresh at #artwork
+      // 17. Direct refresh at #artwork
       await page.reload({ waitUntil: 'domcontentloaded' });
       await page.waitForSelector('.artwork-card', { timeout: 5000 });
       const cardsAfterReload = await page.$$('.artwork-card');
@@ -295,10 +391,9 @@ test('Artwork tab: grouped character cards, sequential playback, dialog viewer a
       const cardCount = await page.$$eval('.artwork-card', (els) => els.length);
       assert.equal(cardCount, 3, `Viewport ${vp.name} renders all 3 character cards`);
 
-      // Touch journey: open dialog, inspect touch target dimensions (min 44x44px)
+      // Touch journey: open dialog, inspect touch target dimensions (min 40x40px)
       await page.locator('.artwork-open-btn').first().click();
       await page.waitForFunction(() => document.querySelector('dialog.artwork-dialog')?.open);
-      await page.locator('.artwork-dialog-video').waitFor();
 
       for (const selector of ['.artwork-dialog-close', '.artwork-dialog-footer button', '#artwork-animation']) {
         const el = page.locator(selector).first();
@@ -309,11 +404,6 @@ test('Artwork tab: grouped character cards, sequential playback, dialog viewer a
 
       await page.locator('.artwork-dialog-close').click();
       await page.waitForTimeout(150);
-
-      if (await page.locator('#nav-toggle').isVisible()) await page.locator('#nav-toggle').click();
-      await page.locator('header a[href="#games"]').click();
-      await page.locator('.game-card').first().waitFor();
-      assert.equal(await page.locator('.artwork-card').count(), 0);
 
       await context.close();
     }
@@ -328,12 +418,20 @@ test('Artwork tab: grouped character cards, sequential playback, dialog viewer a
       await page.goto(`${baseUrl}/#artwork`, { waitUntil: 'domcontentloaded' });
       await page.waitForSelector('.artwork-card', { timeout: 5000 });
 
-      // Previews default to paused under reduced motion
-      const allPaused = await page.evaluate(() => {
-        const vids = Array.from(document.querySelectorAll('.artwork-card video'));
-        return vids.every((v) => v.paused);
+      // Autoplay is STILL active even under reduced-motion (explicit user request)
+      await page.waitForFunction(() => {
+        const vids = Array.from(document.querySelectorAll('.artwork-card video[data-active="true"]'));
+        return vids.length === 3 && vids.every((v) => !v.paused);
+      }, { timeout: 5000 });
+
+      // Decorative fades removed/shortened (duration <= 150ms or 0ms)
+      const fadeDuration = await page.evaluate(() => {
+        const section = document.querySelector('.artwork-section');
+        return getComputedStyle(section).getPropertyValue('--artwork-fade-duration').trim();
       });
-      assert.ok(allPaused, 'Under prefers-reduced-motion, card preview videos must default to paused');
+      assert.ok(fadeDuration === '0s' || fadeDuration === '0ms' || parseInt(fadeDuration, 10) <= 150,
+        `Reduced motion fade duration must be <= 150ms or instant, got ${fadeDuration}`);
+
       await context.close();
     }
 

@@ -1,19 +1,255 @@
-// ponytail: native <video> & <dialog> grouped by character with IntersectionObserver; no WebGL runtime contexts or external router/modal libraries.
+// ponytail: native <video> & <dialog> grouped character gallery with two-layer CSS crossfade; zero runtime dependencies or animation libraries.
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import artworksData from '../data/artworks.json';
 import './artwork.css';
 
-export default function Artwork() {
-  const [isGloballyPaused, setIsGloballyPaused] = useState(() => {
-    if (typeof window !== 'undefined' && window.matchMedia) {
-      return window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-    }
-    return false;
-  });
+// ponytail: preview playlist restricted to case-insensitive exact run/walk/idle; fallback to first clip if none match. Upgrade when character-level preview config is requested.
+const PREVIEW_ANIM_SET = new Set(['run', 'walk', 'idle']);
 
+function getPreviewItems(items) {
+  const matched = items.filter((item) =>
+    PREVIEW_ANIM_SET.has(item.animation?.toLowerCase())
+  );
+  return matched.length > 0 ? matched : [items[0]];
+}
+
+// ponytail: two-layer video crossfade holding outgoing frame until incoming is decoded; instant under reduced motion.
+function VideoCrossfade({
+  clip,
+  loop = false,
+  isPlaying = true,
+  className = 'artwork-video',
+  controls = false,
+  onEnded,
+  onError,
+  ariaLabel
+}) {
+  const [slot0, setSlot0] = useState(() => ({
+    clip,
+    status: 'active',
+    loop
+  }));
+  const [slot1, setSlot1] = useState(() => ({
+    clip: null,
+    status: 'idle',
+    loop: false
+  }));
+
+  const activeSlotRef = useRef(0);
+  const transitionIdRef = useRef(0);
+  const timerRef = useRef(null);
+  const prevClipIdRef = useRef(clip?.id);
+  const stagedRef = useRef(null);
+  const playingRef = useRef(isPlaying);
+  playingRef.current = isPlaying;
+
+  const video0Ref = useRef(null);
+  const video1Ref = useRef(null);
+
+  // Synchronize playback state across active / incoming videos
+  useEffect(() => {
+    for (const video of [video0Ref.current, video1Ref.current]) {
+      if (!video) continue;
+      if (isPlaying && video.querySelector('source')) video.play().catch(() => {});
+      else video.pause();
+    }
+  }, [isPlaying]);
+
+  // Handle clip changes with ready-gated crossfade
+  useEffect(() => {
+    if (!clip) return;
+
+    if (clip.id === prevClipIdRef.current) {
+      if (activeSlotRef.current === 0) {
+        setSlot0((s) => ({ ...s, loop }));
+        if (video0Ref.current) video0Ref.current.loop = loop;
+      } else {
+        setSlot1((s) => ({ ...s, loop }));
+        if (video1Ref.current) video1Ref.current.loop = loop;
+      }
+      return;
+    }
+
+    prevClipIdRef.current = clip.id;
+    transitionIdRef.current += 1;
+    const tid = transitionIdRef.current;
+
+    if (timerRef.current) {
+      clearTimeout(timerRef.current);
+      timerRef.current = null;
+    }
+
+    const currentSlot = activeSlotRef.current;
+    const nextSlot = 1 - currentSlot;
+    const currentVideo = currentSlot === 0 ? video0Ref.current : video1Ref.current;
+
+    // Stage new clip in the incoming slot at opacity 0 (idle)
+    if (nextSlot === 0) {
+      setSlot0({ clip, status: 'idle', loop });
+      setSlot1((s) => ({ ...s, status: 'active' }));
+    } else {
+      setSlot1({ clip, status: 'idle', loop });
+      setSlot0((s) => ({ ...s, status: 'active' }));
+    }
+
+    let decoded = false;
+    const triggerFade = () => {
+      if (decoded || transitionIdRef.current !== tid) return;
+      decoded = true;
+      const incomingVideo = nextSlot === 0 ? video0Ref.current : video1Ref.current;
+      incomingVideo?.pause(); // Keep short clips from ending before their first frame has faded in.
+
+      // Start CSS transition between incoming and outgoing slots
+      if (nextSlot === 0) {
+        setSlot0({ clip, status: 'incoming', loop });
+        setSlot1((s) => ({ ...s, status: 'outgoing' }));
+      } else {
+        setSlot1({ clip, status: 'incoming', loop });
+        setSlot0((s) => ({ ...s, status: 'outgoing' }));
+      }
+
+      const fadeDuration =
+        typeof window !== 'undefined' &&
+        window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
+          ? 0
+          : 220;
+
+      const finish = () => {
+        if (transitionIdRef.current !== tid) return;
+        clearTimeout(timerRef.current);
+        activeSlotRef.current = nextSlot;
+        stagedRef.current = null;
+        if (playingRef.current) incomingVideo?.play().catch(() => {});
+        if (nextSlot === 0) {
+          setSlot0({ clip, status: 'active', loop });
+          setSlot1({ clip: null, status: 'idle', loop: false });
+        } else {
+          setSlot1({ clip, status: 'active', loop });
+          setSlot0({ clip: null, status: 'idle', loop: false });
+        }
+        if (currentVideo) {
+          currentVideo.pause();
+          currentVideo.currentTime = 0;
+        }
+      };
+      stagedRef.current.finish = finish;
+      // transitionend follows actual painted opacity, unlike a timer started before the next paint.
+      timerRef.current = setTimeout(finish, fadeDuration ? fadeDuration + 1000 : 0);
+    };
+
+    stagedRef.current = { clip, nextSlot, tid, triggerFade };
+
+    return () => {
+      clearTimeout(timerRef.current);
+      stagedRef.current = null;
+    };
+  }, [clip?.id]);
+
+  // Load only after React has committed the new <source> elements.
+  useEffect(() => {
+    const stage = stagedRef.current;
+    if (!stage) return;
+    const video = stage.nextSlot === 0 ? video0Ref.current : video1Ref.current;
+    let frame;
+    const ready = () => {
+      if (transitionIdRef.current !== stage.tid || video.readyState < 2 ||
+          ![stage.clip.webm, stage.clip.src].includes(new URL(video.currentSrc || '/', window.location.href).pathname)) return;
+      if (video.requestVideoFrameCallback && playingRef.current) {
+        frame = video.requestVideoFrameCallback(stage.triggerFade);
+      } else stage.triggerFade();
+    };
+    video.addEventListener('loadeddata', ready);
+    video.load();
+    if (playingRef.current) video.play().catch(() => {});
+    return () => {
+      video.removeEventListener('loadeddata', ready);
+      if (frame !== undefined) video.cancelVideoFrameCallback?.(frame);
+    };
+  }, [slot0.clip?.id, slot1.clip?.id]);
+
+  useEffect(() => {
+    const update = (s) => s.clip?.id === clip.id ? { ...s, loop } : s;
+    setSlot0(update);
+    setSlot1(update);
+  }, [loop]);
+
+  useEffect(() => () => {
+    transitionIdRef.current += 1;
+    clearTimeout(timerRef.current);
+  }, []);
+
+  const renderSlot = (slot, ref, slotIndex) => {
+    if (!slot.clip) {
+      return (
+        <video
+          key={'slot-' + slotIndex}
+          ref={ref}
+          className={className}
+          data-idle="true"
+          data-active="false"
+          data-incoming="false"
+          data-outgoing="false"
+          muted
+          playsInline
+          aria-hidden="true"
+        />
+      );
+    }
+
+    const isActive = slot.status === 'active';
+    const isIncoming = slot.status === 'incoming';
+    const isOutgoing = slot.status === 'outgoing';
+    const isIdle = slot.status === 'idle';
+
+    return (
+      <video
+        key={'slot-' + slotIndex}
+        ref={ref}
+        className={className}
+        data-active={isActive ? 'true' : 'false'}
+        data-incoming={isIncoming ? 'true' : 'false'}
+        data-outgoing={isOutgoing ? 'true' : 'false'}
+        data-idle={isIdle ? 'true' : 'false'}
+        muted
+        playsInline
+        autoPlay={isActive && isPlaying}
+        controls={controls && (isActive || isIncoming)}
+        loop={slot.loop}
+        poster={slot.clip.poster}
+        aria-label={ariaLabel}
+        onTransitionEnd={(event) => {
+          if (event.propertyName === 'opacity' && slot.status === 'incoming') stagedRef.current?.finish?.();
+        }}
+        onEnded={() => {
+          if (slot.status === 'active' && onEnded) {
+            onEnded();
+          }
+        }}
+        onError={() => {
+          if (slot.clip && slot.status !== 'outgoing' && onError) {
+            onError();
+          }
+        }}
+      >
+        {slot.clip.webm && <source src={slot.clip.webm} type="video/webm" />}
+        <source src={slot.clip.src} type="video/mp4" />
+      </video>
+    );
+  };
+
+  return (
+    <>
+      {renderSlot(slot0, video0Ref, 0)}
+      {renderSlot(slot1, video1Ref, 1)}
+    </>
+  );
+}
+
+export default function Artwork() {
   const [activeGroup, setActiveGroup] = useState(null);
   const [selectedAnimId, setSelectedAnimId] = useState('auto');
   const [dialogAutoIndex, setDialogAutoIndex] = useState(0);
+  const [dialogError, setDialogError] = useState(false);
 
   const [cardIndices, setCardIndices] = useState(() => ({
     char1: 0,
@@ -22,15 +258,16 @@ export default function Artwork() {
   }));
   const [errorCharacters, setErrorCharacters] = useState(() => new Set());
   const [visibleCharacters, setVisibleCharacters] = useState(() => new Set());
+  const [isDocVisible, setIsDocVisible] = useState(() =>
+    typeof document !== 'undefined' ? !document.hidden : true
+  );
 
   const triggerRef = useRef(null);
   const dialogRef = useRef(null);
   const closeBtnRef = useRef(null);
   const cardRefs = useRef(new Map());
-  const cardVideoRefs = useRef(new Map());
-  const dialogVideoRef = useRef(null);
 
-  // Group artworks strictly by character (10, 17, 1 animations)
+  // Group artworks strictly by character (10, 17, 1 animations; total 28)
   const characterGroups = useMemo(() => {
     const map = new Map();
     for (const item of artworksData) {
@@ -46,21 +283,26 @@ export default function Artwork() {
     return Array.from(map.values());
   }, []);
 
-  // System prefers-reduced-motion preference listener
+  // Precomputed card preview playlists (restricted strictly to run/walk/idle)
+  const cardPlaylists = useMemo(() => {
+    const map = new Map();
+    characterGroups.forEach((group) => {
+      map.set(group.character, getPreviewItems(group.items));
+    });
+    return map;
+  }, [characterGroups]);
+
+  // Document visibility listener to pause resource usage in background tabs
   useEffect(() => {
-    if (typeof window === 'undefined' || !window.matchMedia) return;
-    const mediaQuery = window.matchMedia('(prefers-reduced-motion: reduce)');
-    if (mediaQuery.matches) {
-      setIsGloballyPaused(true);
-    }
-    const handleChange = (e) => {
-      if (e.matches) setIsGloballyPaused(true);
+    if (typeof document === 'undefined') return;
+    const handleVisibility = () => {
+      setIsDocVisible(!document.hidden);
     };
-    mediaQuery.addEventListener('change', handleChange);
-    return () => mediaQuery.removeEventListener('change', handleChange);
+    document.addEventListener('visibilitychange', handleVisibility);
+    return () => document.removeEventListener('visibilitychange', handleVisibility);
   }, []);
 
-  // IntersectionObserver for visibility-aware playback and lazy loading
+  // IntersectionObserver for visibility-aware playback and resource savings
   useEffect(() => {
     if (typeof window === 'undefined' || !('IntersectionObserver' in window)) {
       setVisibleCharacters(new Set(characterGroups.map((g) => g.character)));
@@ -79,10 +321,6 @@ export default function Artwork() {
               next.add(charId);
               return next;
             });
-            const video = cardVideoRefs.current.get(charId);
-            if (video && !isGloballyPaused) {
-              video.play().catch(() => {});
-            }
           } else {
             setVisibleCharacters((prev) => {
               if (!prev.has(charId)) return prev;
@@ -90,10 +328,6 @@ export default function Artwork() {
               next.delete(charId);
               return next;
             });
-            const video = cardVideoRefs.current.get(charId);
-            if (video) {
-              video.pause();
-            }
           }
         }
       },
@@ -105,53 +339,16 @@ export default function Artwork() {
     });
 
     return () => observer.disconnect();
-  }, [characterGroups, isGloballyPaused]);
+  }, [characterGroups]);
 
-  // Sync global pause state across active card videos; avoid restarting offscreen videos
-  useEffect(() => {
-    cardVideoRefs.current.forEach((video, charId) => {
-      if (!video) return;
-      if (isGloballyPaused) {
-        video.pause();
-      } else {
-        if (visibleCharacters.has(charId)) {
-          video.play().catch(() => {});
-        }
-      }
-    });
-  }, [isGloballyPaused, visibleCharacters]);
-
-  // Advance card clip on ended modulo group length; single clip loops
+  // Advance card clip on natural ended; single clip loops natively
   const handleCardClipEnded = (character, totalClips) => {
-    if (totalClips <= 1) {
-      const video = cardVideoRefs.current.get(character);
-      if (video) {
-        video.currentTime = 0;
-        if (!isGloballyPaused && visibleCharacters.has(character)) {
-          video.play().catch(() => {});
-        }
-      }
-      return;
-    }
+    if (totalClips <= 1) return;
     setCardIndices((prev) => ({
       ...prev,
       [character]: ((prev[character] || 0) + 1) % totalClips
     }));
   };
-
-  // When a card advances clip, reload its video and resume if visible
-  useEffect(() => {
-    characterGroups.forEach((group) => {
-      const video = cardVideoRefs.current.get(group.character);
-      const item = group.items[cardIndices[group.character] || 0];
-      if (video && ![item.webm, item.src].includes(new URL(video.currentSrc || '/', window.location.href).pathname)) {
-        video.load();
-        if (visibleCharacters.has(group.character) && !isGloballyPaused) {
-          video.play().catch(() => {});
-        }
-      }
-    });
-  }, [cardIndices]);
 
   // Dialog open/close lifecycle
   useEffect(() => {
@@ -168,7 +365,8 @@ export default function Artwork() {
     triggerRef.current = element;
     setActiveGroup(group);
     setSelectedAnimId('auto');
-    setDialogAutoIndex(cardIndices[group.character] || 0);
+    setDialogAutoIndex(0);
+    setDialogError(false);
   };
 
   const handleCloseModal = () => {
@@ -178,26 +376,20 @@ export default function Artwork() {
     }
     setActiveGroup(null);
     setSelectedAnimId('auto');
+    setDialogError(false);
     triggerRef.current?.focus();
   };
 
-  const handleVideoError = (charId) => {
+  const handleCardError = (charId) => {
     setErrorCharacters((prev) => new Set(prev).add(charId));
   };
 
-  const handleRetryVideo = (charId) => {
+  const handleRetryCard = (charId) => {
     setErrorCharacters((prev) => {
       const next = new Set(prev);
       next.delete(charId);
       return next;
     });
-    const video = cardVideoRefs.current.get(charId);
-    if (video) {
-      video.load();
-      if (!isGloballyPaused && visibleCharacters.has(charId)) {
-        video.play().catch(() => {});
-      }
-    }
   };
 
   // Dialog active clip resolution
@@ -209,38 +401,17 @@ export default function Artwork() {
     return activeGroup.items[dialogAutoIndex] || activeGroup.items[0];
   }, [activeGroup, selectedAnimId, dialogAutoIndex]);
 
-  // When dialog clip changes, load and play the video (stable focus: does NOT refocus close button)
-  useEffect(() => {
-    if (dialogVideoRef.current && currentDialogAnim) {
-      dialogVideoRef.current.load();
-      dialogVideoRef.current.play().catch(() => {});
-    }
-  }, [currentDialogAnim?.id]);
-
   const handleDialogVideoEnded = () => {
     if (!activeGroup) return;
-    if (selectedAnimId !== 'auto') {
-      // Explicitly selected animation loops
-      if (dialogVideoRef.current) {
-        dialogVideoRef.current.currentTime = 0;
-        dialogVideoRef.current.play().catch(() => {});
-      }
-      return;
-    }
-    // Auto mode: advance modulo group length; single clip loops
-    if (activeGroup.items.length <= 1) {
-      if (dialogVideoRef.current) {
-        dialogVideoRef.current.currentTime = 0;
-        dialogVideoRef.current.play().catch(() => {});
-      }
-      return;
-    }
+    if (selectedAnimId !== 'auto') return;
+    if (activeGroup.items.length <= 1) return;
     setDialogAutoIndex((prev) => (prev + 1) % activeGroup.items.length);
   };
 
   const handleSelectAnimation = (e) => {
     const val = e.target.value;
     setSelectedAnimId(val);
+    setDialogError(false);
     if (val === 'auto') {
       setDialogAutoIndex(0);
     }
@@ -259,26 +430,14 @@ export default function Artwork() {
           </p>
         </div>
 
-        {/* Toolbar: Global Play/Pause Previews Toggle */}
-        <div className="artwork-toolbar" role="toolbar" aria-label="Artwork controls">
-          <button
-            type="button"
-            className="artwork-motion-toggle"
-            aria-pressed={isGloballyPaused}
-            aria-label={isGloballyPaused ? 'Play all preview animations' : 'Pause all preview animations'}
-            onClick={() => setIsGloballyPaused((prev) => !prev)}
-          >
-            <i className={`fas ${isGloballyPaused ? 'fa-play' : 'fa-pause'}`} aria-hidden="true" />
-            <span>{isGloballyPaused ? 'Play Previews' : 'Pause Previews'}</span>
-          </button>
-        </div>
-
         {/* Artwork Grid: Exactly 3 Character Cards */}
         <div className="artwork-grid" aria-live="polite">
           {characterGroups.map((group) => {
             const hasError = errorCharacters.has(group.character);
             const isVisible = visibleCharacters.has(group.character);
-            const currentItem = group.items[cardIndices[group.character] || 0] || group.items[0];
+            const playlist = cardPlaylists.get(group.character) || [group.items[0]];
+            const currentIndex = (cardIndices[group.character] || 0) % playlist.length;
+            const currentItem = playlist[currentIndex] || playlist[0];
 
             return (
               <article
@@ -308,7 +467,7 @@ export default function Artwork() {
                         className="artwork-btn-retry"
                         onClick={(e) => {
                           e.stopPropagation();
-                          handleRetryVideo(group.character);
+                          handleRetryCard(group.character);
                         }}
                       >
                         Retry
@@ -316,44 +475,28 @@ export default function Artwork() {
                     </div>
                   ) : (
                     <>
-                      {isVisible ? (
-                        <video
-                          ref={(el) => {
-                            if (el) cardVideoRefs.current.set(group.character, el);
-                            else cardVideoRefs.current.delete(group.character);
-                          }}
-                          muted
-                          autoPlay={!isGloballyPaused}
-                          playsInline
-                          loop={group.items.length === 1}
-                          poster={currentItem.poster}
-                          className="artwork-video"
-                          onEnded={() => handleCardClipEnded(group.character, group.items.length)}
-                          onError={() => handleVideoError(group.character)}
-                        >
-                          {currentItem.webm && <source src={currentItem.webm} type="video/webm" />}
-                          <source src={currentItem.src} type="video/mp4" />
-                        </video>
-                      ) : (
-                        <img
-                          src={currentItem.poster}
-                          alt={group.characterName}
-                          className="artwork-video"
-                          loading="lazy"
-                        />
-                      )}
+                      <VideoCrossfade
+                        clip={currentItem}
+                        loop={playlist.length === 1}
+                        isPlaying={isDocVisible && isVisible && !hasError}
+                        className="artwork-video"
+                        controls={false}
+                        onEnded={() => handleCardClipEnded(group.character, playlist.length)}
+                        onError={() => handleCardError(group.character)}
+                        ariaLabel={group.characterName}
+                      />
                       <div className="artwork-card-overlay">
                         <button
                           type="button"
                           className="artwork-open-btn"
-                          aria-label={`Enlarge ${group.characterName} animations`}
+                          aria-label={`Click to see more ${group.characterName} animations`}
                           onClick={(e) => {
                             e.stopPropagation();
                             handleOpenModal(group, e.currentTarget);
                           }}
                         >
                           <i className="fas fa-expand" aria-hidden="true" />
-                          <span>Enlarge</span>
+                          <span>Click to see more</span>
                         </button>
                       </div>
                     </>
@@ -416,21 +559,29 @@ export default function Artwork() {
 
             <div className="artwork-dialog-body">
               <div className="artwork-dialog-video-box">
-                <video
-                  ref={dialogVideoRef}
-                  controls
-                  autoPlay
-                  playsInline
-                  loop={selectedAnimId !== 'auto' || activeGroup.items.length === 1}
-                  poster={currentDialogAnim.poster}
-                  className="artwork-dialog-video"
-                  onEnded={handleDialogVideoEnded}
-                >
-                  {currentDialogAnim.webm && (
-                    <source src={currentDialogAnim.webm} type="video/webm" />
-                  )}
-                  <source src={currentDialogAnim.src} type="video/mp4" />
-                </video>
+                {dialogError ? (
+                  <div className="artwork-error-state" role="alert">
+                    <p>Failed to load animation</p>
+                    <button
+                      type="button"
+                      className="artwork-btn-retry artwork-dialog-btn-retry"
+                      onClick={() => setDialogError(false)}
+                    >
+                      Retry
+                    </button>
+                  </div>
+                ) : (
+                  <VideoCrossfade
+                    clip={currentDialogAnim}
+                    loop={selectedAnimId !== 'auto' || activeGroup.items.length === 1}
+                    isPlaying={isDocVisible && Boolean(activeGroup) && !dialogError}
+                    className="artwork-dialog-video"
+                    controls={true}
+                    onEnded={handleDialogVideoEnded}
+                    onError={() => setDialogError(true)}
+                    ariaLabel={currentDialogAnim.title}
+                  />
+                )}
               </div>
             </div>
 
