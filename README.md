@@ -77,7 +77,7 @@ The MADONE Studio static homepage is built with React and bundled with Vite.
 
 ### Artwork
 - Open `/#artwork` from the header or footer: three visual-only character cards containing all 28 animations (10 / 17 / 1).
-- Cards autoplay only Run / Walk / Idle clips when present and show “Click to see more”; no gallery playback toolbar.
+- Each card loops one fixed clip, preferring Idle → Walk → Run (first-clip fallback); only the enlarged viewer cycles through animations. Cards show “Click to see more” with no gallery playback toolbar.
 - The enlarged viewer exposes all animations, sequential Auto playback or looping a selected clip, with decoded-frame-gated opacity fades between clips.
 - Muted inline autoplay, visibility-aware playback, shorter reduced-motion fades and an accessible native enlarged viewer.
 - Offline-baked WebM VP9 with H.264 MP4 fallback and JPEG posters; no Spine runtime or source rigs are published. Original files remain outside the repository.

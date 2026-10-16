@@ -3,14 +3,9 @@ import React, { useState, useEffect, useRef, useMemo } from 'react';
 import artworksData from '../data/artworks.json';
 import './artwork.css';
 
-// ponytail: preview playlist restricted to case-insensitive exact run/walk/idle; fallback to first clip if none match. Upgrade when character-level preview config is requested.
-const PREVIEW_ANIM_SET = new Set(['run', 'walk', 'idle']);
-
-function getPreviewItems(items) {
-  const matched = items.filter((item) =>
-    PREVIEW_ANIM_SET.has(item.animation?.toLowerCase())
-  );
-  return matched.length > 0 ? matched : [items[0]];
+// ponytail: one fixed preview per character, idle > walk > run; keep first-clip fallback for rigs without these states.
+function getPreviewItem(items) {
+  return ['idle', 'walk', 'run'].map((name) => items.find((item) => item.animation?.toLowerCase() === name)).find(Boolean) || items[0];
 }
 
 // ponytail: two-layer video crossfade holding outgoing frame until incoming is decoded; instant under reduced motion.
@@ -251,11 +246,6 @@ export default function Artwork() {
   const [dialogAutoIndex, setDialogAutoIndex] = useState(0);
   const [dialogError, setDialogError] = useState(false);
 
-  const [cardIndices, setCardIndices] = useState(() => ({
-    char1: 0,
-    char2: 0,
-    char3: 0
-  }));
   const [errorCharacters, setErrorCharacters] = useState(() => new Set());
   const [visibleCharacters, setVisibleCharacters] = useState(() => new Set());
   const [isDocVisible, setIsDocVisible] = useState(() =>
@@ -282,15 +272,6 @@ export default function Artwork() {
     }
     return Array.from(map.values());
   }, []);
-
-  // Precomputed card preview playlists (restricted strictly to run/walk/idle)
-  const cardPlaylists = useMemo(() => {
-    const map = new Map();
-    characterGroups.forEach((group) => {
-      map.set(group.character, getPreviewItems(group.items));
-    });
-    return map;
-  }, [characterGroups]);
 
   // Document visibility listener to pause resource usage in background tabs
   useEffect(() => {
@@ -340,15 +321,6 @@ export default function Artwork() {
 
     return () => observer.disconnect();
   }, [characterGroups]);
-
-  // Advance card clip on natural ended; single clip loops natively
-  const handleCardClipEnded = (character, totalClips) => {
-    if (totalClips <= 1) return;
-    setCardIndices((prev) => ({
-      ...prev,
-      [character]: ((prev[character] || 0) + 1) % totalClips
-    }));
-  };
 
   // Dialog open/close lifecycle
   useEffect(() => {
@@ -435,9 +407,7 @@ export default function Artwork() {
           {characterGroups.map((group) => {
             const hasError = errorCharacters.has(group.character);
             const isVisible = visibleCharacters.has(group.character);
-            const playlist = cardPlaylists.get(group.character) || [group.items[0]];
-            const currentIndex = (cardIndices[group.character] || 0) % playlist.length;
-            const currentItem = playlist[currentIndex] || playlist[0];
+            const currentItem = getPreviewItem(group.items);
 
             return (
               <article
@@ -477,11 +447,10 @@ export default function Artwork() {
                     <>
                       <VideoCrossfade
                         clip={currentItem}
-                        loop={playlist.length === 1}
+                        loop
                         isPlaying={isDocVisible && isVisible && !hasError}
                         className="artwork-video"
                         controls={false}
-                        onEnded={() => handleCardClipEnded(group.character, playlist.length)}
                         onError={() => handleCardError(group.character)}
                         ariaLabel={group.characterName}
                       />

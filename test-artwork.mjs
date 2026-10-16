@@ -10,7 +10,7 @@ import { chromium } from '/data/career-ops-runtime/node_modules/playwright/index
 const rootDir = path.dirname(fileURLToPath(import.meta.url));
 const scratchDistDir = process.env.MADONE_BUILD_DIR || path.join(process.env.TMPDIR, 'madone-autoplay', 'coder-dist');
 
-test('Artwork tab: autoplay previews, click to see more, crossfade transitions, dialog viewer and responsive checks', async () => {
+test('Artwork tab: one prioritized looping preview per card, full expanded viewer and responsive checks', async () => {
   if (!process.env.MADONE_BUILD_DIR) {
     execFileSync(process.execPath, ['scripts/build.mjs'], {
       cwd: rootDir,
@@ -112,10 +112,8 @@ test('Artwork tab: autoplay previews, click to see more, crossfade transitions, 
         return vids.length === 3 && vids.every((v) => !v.paused && v.currentTime > 0.05 && v.muted);
       }, { timeout: 6000 });
 
-      // 6. Preview playlists restricted to ONLY case-insensitive run/walk/idle in manifest order
-      // char1 -> run, walk
-      // char2 -> RUN (only 1 item, so loops)
-      // char3 -> idle (only 1 item, so loops)
+      // 6. One fixed preview per character: idle > walk > run, case-insensitive.
+      // char1 -> walk; char2 -> RUN; char3 -> idle.
       const char1ActiveVid = await page.$('.artwork-card[data-character="char1"] video[data-active="true"]');
       const char2ActiveVid = await page.$('.artwork-card[data-character="char2"] video[data-active="true"]');
       const char3ActiveVid = await page.$('.artwork-card[data-character="char3"] video[data-active="true"]');
@@ -124,78 +122,32 @@ test('Artwork tab: autoplay previews, click to see more, crossfade transitions, 
       const char2Src = await page.evaluate((v) => v.currentSrc || v.src, char2ActiveVid);
       const char3Src = await page.evaluate((v) => v.currentSrc || v.src, char3ActiveVid);
 
-      assert.ok(char1Src1.includes('run'), `char1 first clip must be run, got ${char1Src1}`);
+      assert.ok(char1Src1.includes('walk'), `char1 must prefer walk over run, got ${char1Src1}`);
       assert.ok(char2Src.includes('RUN') || char2Src.toLowerCase().includes('run'), `char2 clip must be RUN, got ${char2Src}`);
       assert.ok(char3Src.includes('idle'), `char3 clip must be idle, got ${char3Src}`);
 
-      const char2Loop = await page.evaluate((v) => v.loop, char2ActiveVid);
-      const char3Loop = await page.evaluate((v) => v.loop, char3ActiveVid);
-      assert.equal(char2Loop, true, 'char2 single-preview clip must have loop=true');
-      assert.equal(char3Loop, true, 'char3 single-preview clip must have loop=true');
-
-      // Capture char2 currentTime to verify no-other-card-reset rule
-      await page.evaluate((v) => { window.__otherReloads = 0; v.addEventListener('loadstart', () => window.__otherReloads++); }, char2ActiveVid);
-
-      // 7. Natural ended transition on char1: crossfade from run -> walk
-      // Seek active video near end
-      await page.evaluate(async (v) => {
-        v.currentTime = v.duration - 0.15;
-        if (v.paused) await v.play();
-      }, char1ActiveVid);
-
-      // Wait for incoming video to appear and decode (status incoming)
-      await page.waitForFunction(() => {
-        const incoming = document.querySelector('.artwork-card[data-character="char1"] video[data-incoming="true"]');
-        return incoming !== null;
-      }, { timeout: 5000 });
-
-      // Check intermediate opacity on incoming frame while outgoing is retained
-      const opacities = await page.evaluate(() => {
-        const incoming = document.querySelector('.artwork-card[data-character="char1"] video[data-incoming="true"]');
-        const outgoing = document.querySelector('.artwork-card[data-character="char1"] video[data-outgoing="true"]');
-        return {
-          incomingOp: incoming ? parseFloat(window.getComputedStyle(incoming).opacity) : null,
-          outgoingOp: outgoing ? parseFloat(window.getComputedStyle(outgoing).opacity) : null
-        };
-      });
-
-      assert.ok(opacities.incomingOp !== null, 'Incoming video layer must be present during crossfade');
-      assert.ok(opacities.outgoingOp !== null && opacities.outgoingOp > 0, 'Outgoing video layer must be retained with opacity > 0 during crossfade');
-
-      // Wait for transition to complete and old layer cleanup
-      await page.waitForFunction(() => {
-        const card = document.querySelector('.artwork-card[data-character="char1"]');
-        const active = card.querySelector('video[data-active="true"]');
-        const incoming = card.querySelector('video[data-incoming="true"]');
-        return !incoming && active && (active.currentSrc || active.src).includes('walk');
-      }, { timeout: 5000 });
-
-      // Check old layer is cleaned up (paused, idle)
-      const layersState = await page.evaluate(() => {
-        const vids = Array.from(document.querySelectorAll('.artwork-card[data-character="char1"] video'));
-        const idleVid = vids.find((v) => v.dataset.idle === 'true');
-        return {
-          totalVideos: vids.length,
-          idleIsPaused: idleVid ? idleVid.paused : null
-        };
-      });
-      assert.equal(layersState.totalVideos, 2, 'Two video layers used for crossfade');
-      assert.equal(layersState.idleIsPaused, true, 'Idle layer must be paused after transition completes');
-
-      // Verify char2 was not reset or reloaded during char1 transition
-      assert.equal(await page.evaluate(() => window.__otherReloads), 0, 'Advancing char1 must not reload char2 (native loop wrap is allowed)');
-
-      // Now seek walk near end to verify wrap-around to run
-      const char1WalkVid = await page.$('.artwork-card[data-character="char1"] video[data-active="true"]');
-      await page.evaluate(async (v) => {
-        v.currentTime = v.duration - 0.15;
-        if (v.paused) await v.play();
-      }, char1WalkVid);
-
-      await page.waitForFunction(() => {
-        const active = document.querySelector('.artwork-card[data-character="char1"] video[data-active="true"]');
-        return active && (active.currentSrc || active.src).includes('run');
-      }, { timeout: 5000 });
+      // 7. Native looping must keep the exact same source across repeated wraps.
+      for (const video of [char1ActiveVid, char2ActiveVid, char3ActiveVid]) {
+        assert.equal(await video.evaluate((v) => v.loop), true, 'Every gallery preview loops one clip');
+        const originalSrc = await video.evaluate((v) => v.currentSrc);
+        for (let repeat = 0; repeat < 2; repeat++) {
+          await video.evaluate(async (v) => {
+            window.__previewWrapped = false;
+            const tail = v.duration - 0.12;
+            v.addEventListener('timeupdate', function wrapped() {
+              if (v.currentTime < tail - 0.2) {
+                window.__previewWrapped = true;
+                v.removeEventListener('timeupdate', wrapped);
+              }
+            });
+            v.currentTime = tail;
+            await v.play();
+          });
+          await page.waitForFunction(() => window.__previewWrapped, null, { timeout: 5000 });
+          assert.equal(await video.evaluate((v) => v.currentSrc), originalSrc, 'Loop must not select another animation');
+        }
+      }
+      assert.equal(await page.locator('.artwork-card video[data-incoming="true"]').count(), 0, 'Gallery never transitions to another clip');
 
       // 8. Dialog: Open char1 card via "Click to see more" button
       const char1EnlargeBtn = await page.$('.artwork-card[data-character="char1"] .artwork-open-btn');
@@ -219,7 +171,7 @@ test('Artwork tab: autoplay previews, click to see more, crossfade transitions, 
       // Dialog video autoplays muted
       await page.waitForFunction(() => {
         const v = document.querySelector('dialog.artwork-dialog video[data-active="true"]');
-        return v && !v.paused && v.muted;
+        return v && v.readyState >= 2 && Number.isFinite(v.duration) && v.duration > 0 && !v.paused && v.muted;
       }, { timeout: 5000 });
 
       // 9. Dialog auto sequential playback with STABLE FOCUS
@@ -227,16 +179,17 @@ test('Artwork tab: autoplay previews, click to see more, crossfade transitions, 
       assert.equal(await page.evaluate(() => document.activeElement?.id), 'artwork-animation');
 
       const dialogActiveVid = await page.$('dialog.artwork-dialog video[data-active="true"]');
+      const initialDialogSrc = await dialogActiveVid.evaluate((v) => v.currentSrc);
       await page.evaluate(async (v) => {
         v.currentTime = v.duration - 0.15;
         if (v.paused) await v.play();
       }, dialogActiveVid);
 
       // Wait for auto advance in dialog
-      await page.waitForFunction(() => {
+      await page.waitForFunction((initialSrc) => {
         const v = document.querySelector('dialog.artwork-dialog video[data-active="true"]');
-        return v && !(v.currentSrc || v.src).includes('run');
-      }, { timeout: 5000 });
+        return v && v.readyState >= 2 && !v.paused && v.currentSrc !== initialSrc;
+      }, initialDialogSrc, { timeout: 5000 });
 
       // Verify focus remained stable on select element
       assert.equal(await page.evaluate(() => document.activeElement?.id), 'artwork-animation',
