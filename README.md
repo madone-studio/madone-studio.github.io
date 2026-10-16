@@ -76,8 +76,9 @@ The MADONE Studio static homepage is built with React and bundled with Vite.
 - **Build a private preview:** `MADONE_BUILD_DIR=/absolute/staging/path node scripts/build.mjs`; never rebuild the live `dist` in place.
 
 ### Artwork
-- Open `/#artwork` from the header or footer: 28 looping animations across three characters (10 / 17 / 1).
-- Responsive preview cards, character filters, pause/play, reduced-motion default and native enlarged viewer with Previous/Next.
+- Open `/#artwork` from the header or footer: three visual-only character cards containing all 28 animations (10 / 17 / 1).
+- Previews play each character’s animations in sequence. The enlarged viewer defaults to the same automatic sequence, with an animation selector to loop a chosen clip.
+- Pause/play previews, reduced-motion default, visibility-aware playback and an accessible native enlarged viewer.
 - Offline-baked WebM VP9 with H.264 MP4 fallback and JPEG posters; no Spine runtime or source rigs are published. Original files remain outside the repository.
 
 ### Production
